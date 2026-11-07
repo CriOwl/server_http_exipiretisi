@@ -64,7 +64,7 @@ int passive_socket(char * ip_server, char * service_or_port, int q_len){
         }
         int error_listen=listen(fd_sock_server,q_len);
         if(error_listen!=0){
-            perror("Error Bind : "); 
+            perror("Error Listen : "); 
             close(fd_sock_server);
             fd_sock_server=-100;
             continue;
