@@ -3,308 +3,188 @@ Modulo de parseo de una peticion HTTP
 este modulo tomara un arreglo de bytes y separa
 los encabezados, comandos, y contenido a la vez que verifica la sintaxis http 
 y la disponibilidad de recursos para responder con los codigos de respuesta
-correspondiente a la vez que arma los encabezados
-*/
-
-#include<string.h>
-#include<stdio.h>
-#include<error.h>
+correspondiente a la vez que arma los encabezados*/
+#define _POSIX_C_SOURCE 200809L
+#include <stddef.h>
+#include <string.h>
+#include <strings.h>
+#include <stdio.h>
+#define BUFFER_READ         40960
+#define MAX_HEADER             10
+#define MAX_BUFFER_HEADER   4096
+#define MAX_BUFFER_VALUE    4096
+#define MAX_METHOD            15
+#define MAX_PATH             120
+#define HTTP_PARSE_OK             1
+#define HTTP_PARSE_MORE           0
+#define HTTP_PARSE_BAD_REQUEST   -1
+#define HTTP_PARSE_METHOD       -25
+#define HTTP_PARSE_VERSION      -26
+#define HTTP_PARSE_TOO_LARGE    -27
+#define HTTP_PARSE_TOO_MANY     -28
+#define HTTP_PARSE_HOST         -29
 
 struct http_header_ {
-    char encabezado[200];
-    int idx_encabezado;
-    char value[300];
-    int idx_value;
+    char header[MAX_BUFFER_HEADER];
+    size_t idx_header;
+    char value[MAX_BUFFER_VALUE];
+    size_t idx_value;
 };
+
 struct first_line {
-    char method[15];
-    int idx_method;
-    char path[120];
-    int idx_path;
+    char method[MAX_METHOD];
+    size_t idx_method;
+    char path[MAX_PATH];
+    size_t idx_path;
 };
-struct http_msg_ { 
-    char *buffer_read;
-    int max_len_buffer;
-    int idx_begin;
+
+struct http_msg_ {
+    char buffer_read[BUFFER_READ];
+    size_t idx_begin;
     int idx_end;
-    int len_read;
-    struct first_line f_line;    
-    struct http_header_ headers[30];
-    int max_len_header;
-    int idx_header;
+    size_t len_read;
+    struct first_line f_line;
+    struct http_header_ headers_t[MAX_HEADER];
+    size_t idx_header;
+    int close_after_response;
 };
 
+char get_char(struct http_msg_ *msg, size_t offset){
+    return msg->buffer_read[(msg->idx_begin + offset) % BUFFER_READ];
+}
+int is_char_avaible_header(char value){
+         //  A-Z                            ^ - z                           0-9          
+    if ((value >= 65 && value <= 90) || (value >= 94 && value <= 122) || (value >= 48 && value <= 57)) {
+        return 1;
+    }
+    // valores ascci de !#$%&'                          *+-                                                         
+    else if((value>=33 && value<=39 && value !=34) || (value>=42 && value<=46 && value !=44) || (value==124) || (value==126)){
+        return 1;
+    }
+    return 0;
+}
 
-char peticion_ejemplo[]=""
-"GET /index.html HTTP/1.1 \r\n"
-"Host: www.ejemplo.com \r\n"
-"User-Agent: MiClienteHTTP/1.0\r\n"
-"Accept: text/html \r\n"
-"Accept-Encoding: gzip, deflate\r\n"
-"Connection: keep-alive"
-" content-lenght=1000"
-"\r\n\r\n"
-"GET /index.html HTTP/1.1 \r\n"
-"Host: www.ejemplo.com \r\n"
-"User-Agent: MiClienteHTTP/1.0\r\n"
-"Accept: text/html \r\n"
-"Accept-Encoding: gzip, deflate\r\n"
-"Connection: keep-alive"
-"\r\n\r\n"
-"GET /index.html HTTP/1.1 \r\n"
-"Host: www.ejemplo.com \r\n";
+int copy_buffer(char *dst, int size_dst, struct http_msg_ *msg_http, int start, int end){
+    if (end < start || end - start >= size_dst) {
+        return HTTP_PARSE_TOO_LARGE;
+    }
+    int n = end - start;
+    for (int i = 0; i < n; i++) {
+        dst[i] = (char)get_char(msg_http, start + i);
+    }
+    dst[n] = '\0';
+    return HTTP_PARSE_OK;
+}
 
-void parserHttp(struct http_msg_ *msg){
-    //Buffer circular 
-    for(int idx=msg->idx_begin;idx+3<msg->len_read;idx++){
-        if (msg->buffer_read[idx%msg->max_len_buffer]     == '\r' && msg->buffer_read[(idx+ 1)%msg->max_len_buffer ] == '\n' && msg->buffer_read[(idx+ 2)%msg->max_len_buffer ] == '\r' && msg->buffer_read[(idx+ 3)%msg->max_len_buffer ] == '\n') {
-            msg->idx_end=idx+3;
-            afd_parsing(msg);
-            break;
+int find_request_header_len_(struct http_msg_ *msg_http, size_t *header_len){
+    for (int i = 0; i + 3 < msg_http->len_read; i++) {
+        if (get_char(msg_http, i) == '\r' && get_char(msg_http, i + 1) == '\n' && get_char(msg_http, i + 2) == '\r' && get_char(msg_http, i + 3) == '\n') {
+            *header_len = i + 4;
+            return HTTP_PARSE_OK;
         }
     }
-    msg->idx_end=-1;
+    return HTTP_PARSE_MORE;
 }
-void parsing_first_line(struct http_msg_ *msg){
-    int i;
-    for(i=0;msg->buffer_read[(msg->idx_begin+i)%msg->max_len_buffer]!=' ' && i<7;i++){ // el len maximo de un metodo estandar de http es 7 options
-        msg->f_line.method[i]=msg->buffer_read[(msg->idx_begin+i)%msg->max_len_buffer];
-    }
-}
-/*
-// Matriz de transicion
-simbolos encabezado se = [-_#$%^&'*+-~=]
 
-    [a-Z]   [0-9]    ' '    /t    /n      /r     /  se  :  /0        h    t   p   .
-q0    1               1     1                                          1   1   1      // iniciar indice metodo
-q1    1               2     2                                           1   1   1       // terminar indice metodo si transicion es /t o ' '                              
-q2                    2     2                   3                                       //iniciar indice path si transion es /                                                                            
-q3    3        3      4     4                   3   3   3               3   3   3   3   // terminar indica path si transicion es /t ' '
-q4                    4     4                                           5                              
-q5                                                                          6
-q6                                                                          7
-q7                                                                              8
-q8                                              9
-q9              9                                                                   10
-q10             10                          11
-q11                                 12      
-q12   13       13      12     12            17      13                  13  13  13  13   // iniciar indice encabezado si transicion es hacia 13
-q13   13        13                                  13   14             13  13  13  13   // terminar indice encabezado si transicion es 14
-q14   15        15     14    14                  15  15  15             15  15  15  15  // iniciar indice valor si transicion es 14 terminar si es 16
-q15   15        15     15    15           16     15  15  15             15  15  15  15
-q16                                 17       
-q17   13       13      12     12          18
-q18                                 19
-q19 aceptacion
-*/
-void afd_parsing(struct http_msg_ *msg){
-    /*Vocabulario*/
-    int matrizTransicion[20][15]={
-        // se= [! # $ % & ' * + - . ^ _] //33 -39 42-45  94  95 96
-        //  0       1       2      3     4      5        6   7   8  9        10     11  12   13    14
-        //[a-Z]   [0-9]    ' '    /t    /n      /r       //  se  :  /0        h     t    p    .     resto
-        {   1,     -1,     -1,    -1,   -1,     -1,     -1, -1, -1, -1,       1,    1,  1,  -1 ,    -9},//q0 
-        {   1,     -1,      2,     2,   -1,     -1,     -1, -1, -1, -1,       1,    1,  1,  -1 ,    -9},//q1  // -1 metodo incorrecto sintaxis
-        {  -2,     -2,      2,     2,   -2,     -2,      3, -2, -2, -2,      -2,   -2, -2,  -2 ,    -9},//q2  // -2 separacion de ruta incorrecta
-        {   3,      3,      4,     4,   -3,     -3,      3,  3,  3, -3,       3,    3,  3,   3 ,    -9},//q3  // -3 separacion de ruta incorrecta y protocolo
-        {  -4,     -4,      4,     4,   -4,     -4,     -4, -4, -4, -4,       5,   -4, -4,  -4 ,    -9},//q4 
-        {  -4,     -4,     -4,    -4,   -4,     -4,     -4, -4, -4, -4,      -4,    6, -4,  -4 ,    -9},//q5 
-        {  -4,     -4,     -4,    -4,   -4,     -4,     -4, -4, -4, -4,      -4,    7, -4,  -4 ,    -9},//q6 
-        {  -4,     -4,     -4,    -4,   -4,     -4,     -4, -4, -4, -4,      -4,   -4,  8,  -4 ,    -9},//q7 
-        {  -4,     -4,     -4,    -4,   -4,     -4,      9, -4, -4, -4,      -4,   -4, -4,  -4 ,    -9},//q8 
-        {  -4,      9,     -4,    -4,   -4,     -4,     -4, -4, -4, -4,      -4,   -4, -4,  10 ,    -9},//q9 
-        {  -4,     10,     -4,    -4,   -4,     11,     -4, -4, -4, -4,      -4,   -4, -4,  -4 ,    -9},//q10 // -4 error protocolo
-        {  -5,     -5,     -5,    -5,   12,     -5,     -5, -5, -5, -5,      -5,   -5, -5,  -5 ,    -9},//q11 // -5 delimitacion
-        {  13,     13,     -6,    -6,   -6,     -6,     -6, 13, -6, -6,      13,   13, 13,  13 ,    -9},//q12 // -6 error de encabezado
-        {  13,     13,     -6,    -6,   -6,     -6,     -6, 13, 14, -6,      13,   13, 13,  13 ,    -9},//q13 // 
-        {  15,     15,     14,    14,   -7,     16,     15, 15, 15, -7,      15,   15, 15,  15 ,    -9},//q14 // -7 error de valor
-        {  15,     15,     15,    15,   -7,     16,     15, 15, 15, -7,      15,   15, 15,  15 ,    -9},//q15 //
-        {  -5,     -5,     -5,    -5,   17,     -5,     -5, -5, -5, -5,      -5,   -5, -5,  -5 ,    -9},//q16 //
-        {  13,     13,     -6,    -6,   -6,     18,     -6, 13, -6, -6,      13,   13, 13,  13 ,    -9},//q17 //
-        {  -8,     -8,     -8,    -8,   19,     -8,     -8, -8, -8, -8,      -8,   -8, -8,  -8 ,    -9},//q18 // -8 error de terminacion de encabezado  // 19 estado de aceptacion
-        {  -8,     -8,     -8,    -8,   -8,     -8,     -8, -8, -8, -8,      -8,   -8, -8,  -8 ,    -9},//q19 // 19 estado de aceptacion
-    };
-    int filas=0;
-    int idx=msg->idx_begin;
-    int i=0;
-    while(filas>=0 && i<(msg->idx_end-msg->idx_begin)){
-        idx=(msg->idx_begin+i)%msg->max_len_buffer;
-        if (filas<0){
-            //error
-            return;
-        }else if(filas==19){
-            //aceptacion
-            return;
-        }
-        if(msg->buffer_read[idx]==72 || msg->buffer_read[idx]==104){ //valor H y h en ascci
-            if((filas==0|| filas==1) && msg->f_line.idx_method<sizeof(msg->f_line.method)){
-                msg->f_line.method[msg->f_line.idx_method]=msg->buffer_read[idx];
-                msg->f_line.idx_method++;
-            }else if(filas==3 && msg->f_line.idx_path<sizeof(msg->f_line.path) ){
-                msg->f_line.path[msg->f_line.idx_path]=msg->buffer_read[idx];
-                msg->f_line.idx_path++;
-            }else if((filas==12 || filas ==13)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_encabezado<sizeof(msg->headers[msg->idx_header].encabezado)){
-                msg->headers[msg->idx_header].encabezado[msg->headers[msg->idx_header].idx_encabezado]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_encabezado++;
-            }else if((filas==14 || filas ==15)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_value<sizeof(msg->headers[msg->idx_header].value)){
-                msg->headers[msg->idx_header].value[msg->headers[msg->idx_header].idx_value]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_value++;
-            }else if(filas==17 && msg->idx_header<msg->max_len_header){
-                msg->idx_header++;
+int find_fin_header(struct http_msg_ *msg_http, int start, int limit, int *idx_fin_header){
+    for (int i = start; i < limit; i++) {
+        char value = get_char(msg_http, i);
+        if (value == '\r') {
+            if (i + 1 < limit && get_char(msg_http, i + 1) == '\n') {
+                *idx_fin_header = i;
+                return HTTP_PARSE_OK;
             }
-            filas=matrizTransicion[filas][10];
-        }else if(msg->buffer_read[idx]==84 || msg->buffer_read[idx]==116){ //valor t y t en ascci
-            if((filas==0|| filas==1) && msg->f_line.idx_method<sizeof(msg->f_line.method)){
-                msg->f_line.method[idx]=msg->buffer_read[idx];
-                msg->f_line.idx_method++;
-            }else if(filas==3 && msg->f_line.idx_path<sizeof(msg->f_line.path) ){
-                msg->f_line.path[msg->f_line.idx_path]=msg->buffer_read[idx];
-                msg->f_line.idx_path++;
-            }else if((filas==12 || filas ==13)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_encabezado<sizeof(msg->headers[msg->idx_header].encabezado)){
-                msg->headers[msg->idx_header].encabezado[msg->headers[msg->idx_header].idx_encabezado]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_encabezado++;
-            }else if((filas==14 || filas ==15)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_value<sizeof(msg->headers[msg->idx_header].value)){
-                msg->headers[msg->idx_header].value[msg->headers[msg->idx_header].idx_value]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_value++;
-            }else if(filas==17 && msg->idx_header<msg->max_len_header){
-                msg->idx_header++;
-            }
-            filas=matrizTransicion[filas][11];
+            return HTTP_PARSE_BAD_REQUEST;
         }
-        else if(msg->buffer_read[idx]==80 || msg->buffer_read[idx]==112){ //valor p y P en ascci
-            if((filas==0|| filas==1) && msg->f_line.idx_method<sizeof(msg->f_line.method)){
-                msg->f_line.method[msg->f_line.idx_method]=msg->buffer_read[idx];
-                msg->f_line.idx_method++;
-            }else if(filas==3 && msg->f_line.idx_path<sizeof(msg->f_line.path) ){
-                msg->f_line.path[msg->f_line.idx_path]=msg->buffer_read[idx];
-                msg->f_line.idx_path++;
-            }else if((filas==12 || filas ==13)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_encabezado<sizeof(msg->headers[msg->idx_header].encabezado)){
-                msg->headers[msg->idx_header].encabezado[msg->headers[msg->idx_header].idx_encabezado]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_encabezado++;
-            }else if((filas==14 || filas ==15)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_value<sizeof(msg->headers[msg->idx_header].value)){
-                msg->headers[msg->idx_header].value[msg->headers[msg->idx_header].idx_value]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_value++;
-            }else if(filas==17 && msg->idx_header<msg->max_len_header){
-                msg->idx_header++;
-            }
-            filas=matrizTransicion[filas][12];
+        if (value == '\n') {
+            return HTTP_PARSE_BAD_REQUEST;
         }
-        else if((65<=msg->buffer_read[idx] && msg->buffer_read[idx]<=90) || (97<=msg->buffer_read[idx] && msg->buffer_read[idx]<=122)){  // a-Z
-            if((filas==0|| filas==1) && msg->f_line.idx_method<sizeof(msg->f_line.method)){
-                msg->f_line.method[msg->f_line.idx_method]=msg->buffer_read[idx];
-                msg->f_line.idx_method++;
-            }else if(filas==3 && msg->f_line.idx_path<sizeof(msg->f_line.path) ){
-                msg->f_line.path[msg->f_line.idx_path]=msg->buffer_read[idx];
-                msg->f_line.idx_path++;
-            }else if((filas==12 || filas ==13)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_encabezado<sizeof(msg->headers[msg->idx_header].encabezado)){
-                msg->headers[msg->idx_header].encabezado[msg->headers[msg->idx_header].idx_encabezado]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_encabezado++;
-            }else if((filas==14 || filas ==15)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_value<sizeof(msg->headers[msg->idx_header].value)){
-                msg->headers[msg->idx_header].value[msg->headers[msg->idx_header].idx_value]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_value++;
-            }else if(filas==17 && msg->idx_header<msg->max_len_header){
-                msg->idx_header++;
-            }
-            filas=matrizTransicion[filas][0];
-        }
-        else if((48<=msg->buffer_read[idx] && msg->buffer_read[idx]<=57)){  // 0-9
-            if(filas==3 && msg->f_line.idx_path<sizeof(msg->f_line.path) ){
-                msg->f_line.path[msg->f_line.idx_path]=msg->buffer_read[idx];
-                msg->f_line.idx_path++;
-            }else if((filas==12 || filas ==13)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_encabezado<sizeof(msg->headers[msg->idx_header].encabezado)){
-                msg->headers[msg->idx_header].encabezado[msg->headers[msg->idx_header].idx_encabezado]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_encabezado++;
-            }else if((filas==14 || filas ==15)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_value<sizeof(msg->headers[msg->idx_header].value)){
-                msg->headers[msg->idx_header].value[msg->headers[msg->idx_header].idx_value]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_value++;
-            }
-            filas=matrizTransicion[filas][1];
-        }
-        else if(msg->buffer_read[idx]==' '){
-            if((filas ==13)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_encabezado<sizeof(msg->headers[msg->idx_header].encabezado)){
-                msg->headers[msg->idx_header].encabezado[msg->headers[msg->idx_header].idx_encabezado]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_encabezado++;
-            }else if((filas ==15)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_value<sizeof(msg->headers[msg->idx_header].value)){
-                msg->headers[msg->idx_header].value[msg->headers[msg->idx_header].idx_value]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_value++;
-            }else if(filas==17 && msg->idx_header<msg->max_len_header){
-                msg->idx_header++;
-            }
-            filas=matrizTransicion[filas][2];
-        }
-        else if(msg->buffer_read[idx]=='\t'){
-            if((filas ==13)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_encabezado<sizeof(msg->headers[msg->idx_header].encabezado)){
-                msg->headers[msg->idx_header].encabezado[msg->headers[msg->idx_header].idx_encabezado]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_encabezado++;
-            }
-            else if((filas ==15)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_value<sizeof(msg->headers[msg->idx_header].value)){
-                msg->headers[msg->idx_header].value[msg->headers[msg->idx_header].idx_value]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_value++;
-            }
-            filas=matrizTransicion[filas][3];
-        }
-        else if(msg->buffer_read[idx]=='\n'){
-            filas=matrizTransicion[filas][4];
-        }
-        else if(msg->buffer_read[idx]=='\r'){
-            filas=matrizTransicion[filas][5];
-        }
-        else if(msg->buffer_read[idx]=='/'){
-            if((filas==3 || filas==2) && msg->f_line.idx_path<sizeof(msg->f_line.path) ){
-                msg->f_line.path[msg->f_line.idx_path]=msg->buffer_read[idx];
-                msg->f_line.idx_path++;
-            }else if((filas==14 || filas ==15)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_value<sizeof(msg->headers[msg->idx_header].value)){
-                msg->headers[msg->idx_header].value[msg->headers[msg->idx_header].idx_value]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_value++;
-            }
-            filas=matrizTransicion[filas][6];
-        }
-        else if((33<=msg->buffer_read[idx] && msg->buffer_read[idx]<=39)|| (42<=msg->buffer_read[idx] && msg->buffer_read[idx]<=45) || (94<=msg->buffer_read[idx] && msg->buffer_read[idx]<=96)){ // se
-            if(filas==3 && msg->f_line.idx_path<sizeof(msg->f_line.path) ){
-                msg->f_line.path[msg->f_line.idx_path]=msg->buffer_read[idx];
-                msg->f_line.idx_path++;
-            }else if((filas==12||filas ==13)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_encabezado<sizeof(msg->headers[msg->idx_header].encabezado)){
-                msg->headers[msg->idx_header].encabezado[msg->headers[msg->idx_header].idx_encabezado]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_encabezado++;
-            }else if((filas==14 || filas ==15)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_value<sizeof(msg->headers[msg->idx_header].value)){
-                msg->headers[msg->idx_header].value[msg->headers[msg->idx_header].idx_value]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_value++;
-            }else if(filas==17 && msg->idx_header<msg->max_len_header){
-                msg->idx_header++;
-            }
-            filas=matrizTransicion[filas][7];
-        }
-        else if(msg->buffer_read[idx]==':'){
-            if(filas==3 && msg->f_line.idx_path<sizeof(msg->f_line.path) ){
-                msg->f_line.path[msg->f_line.idx_path]=msg->buffer_read[idx];
-                msg->f_line.idx_path++;
-            }else if((filas==14 || filas ==15)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_value<sizeof(msg->headers[msg->idx_header].value)){
-                msg->headers[msg->idx_header].value[msg->headers[msg->idx_header].idx_value]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_value++;
-            }
-            filas=matrizTransicion[filas][8];
-        }
-        else if(msg->buffer_read[idx]==NULL){
-            filas=matrizTransicion[filas][9];
-        }
-        else if(msg->buffer_read[idx]=='.'){
-            if(filas==3 && msg->f_line.idx_path<sizeof(msg->f_line.path) ){
-                msg->f_line.path[msg->f_line.idx_path]=msg->buffer_read[idx];
-                msg->f_line.idx_path++;
-            }else if((filas==12||filas ==13)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_encabezado<sizeof(msg->headers[msg->idx_header].encabezado)){
-                msg->headers[msg->idx_header].encabezado[msg->headers[msg->idx_header].idx_encabezado]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_encabezado++;
-            }else if((filas==14 || filas ==15)&& msg->idx_header<msg->max_len_header && msg->headers[msg->idx_header].idx_value<sizeof(msg->headers[msg->idx_header].value)){
-                msg->headers[msg->idx_header].value[msg->headers[msg->idx_header].idx_value]=msg->buffer_read[idx];
-                msg->headers[msg->idx_header].idx_value++;
-            }else if(filas==17 && msg->idx_header<msg->max_len_header){
-                msg->idx_header++;
-            }
-            filas=matrizTransicion[filas][13];
-        }else{
-            filas=matrizTransicion[filas][14];
-        }
+    }
+    return HTTP_PARSE_BAD_REQUEST;
+}
+
+void consume_prefix(struct http_msg_ *http_msg, size_t len){
+    if (len == 0 || len > http_msg->len_read) {
+        return;
+    }
+    // Recorre todo el buffer circular en caso de fallo o de aceptacion evitando consumir data ya consumida o incorrecta
+    http_msg->idx_end = (http_msg->idx_begin + len - 1) % BUFFER_READ; 
+    http_msg->idx_begin = (http_msg->idx_begin + len) % BUFFER_READ;
+    http_msg->len_read -= len;
+}
+
+
+int parse_first_line( struct http_msg_ *msg_http, size_t line_end){
+    size_t i = 0;
+    // Un comando de http al inicio no tiene " " solo al final 
+    while (i < line_end && get_char(msg_http, i) != ' ') {
         i++;
     }
+    if (i == 0 || i == line_end) {
+        // la solicitud era solo " " o tenia un " " al inicio que segun el rfc no deberia
+        return HTTP_PARSE_BAD_REQUEST;
+    }
+    for (size_t j = 0; j < i; j++) {
+    // El comando http tiene los mismo simboloes q los de headers es [A-z] [0-9] [!#$%^&*-_.+~|*]
+        if (!is_char_avaible_header(get_char(msg_http, j))) {
+            return HTTP_PARSE_BAD_REQUEST;
+        }
+    }
+    int result = copy_buffer(msg_http->f_line.method,sizeof(msg_http->f_line.method),msg_http, 0, i);
+    if (result != HTTP_PARSE_OK) {
+        return result;
+    }
+    msg_http->f_line.idx_method = i;
+    if (strcmp(msg_http->f_line.method, "GET") != 0) {
+        return HTTP_PARSE_METHOD;
+    }
+    while (i < line_end && get_char(msg_http, i) == ' ') {
+        i++;
+    }
+    size_t idx_path_begin = i;
+    size_t idx_path_end = idx_path_begin;
+    while (idx_path_end < line_end && get_char(msg_http, idx_path_end) != ' ') {
+        idx_path_end++;
+    }
+    if (idx_path_begin == idx_path_end || idx_path_end == line_end) {
+        return HTTP_PARSE_BAD_REQUEST;
+    }
+    if (get_char(msg_http, idx_path_begin) != '/') {
+        return HTTP_PARSE_BAD_REQUEST;
+    }
+    for (size_t i = idx_path_begin; i < idx_path_end; i++) {
+        char value = get_char(msg_http, i);
+        // No se acepta en el frag ni querrys
+        if (value <= ' ' || value >= 127 || value == '#') {
+            return HTTP_PARSE_BAD_REQUEST;
+        }
+    }
+    result = copy_buffer(msg_http->f_line.path,sizeof(msg_http->f_line.path), msg_http, idx_path_begin, idx_path_end);
+    if (result != HTTP_PARSE_OK) {
+        return result;
+    }
+    msg_http->f_line.idx_path = idx_path_end - idx_path_begin;
+    i=idx_path_end;
+    while (i < line_end && get_char(msg_http, i) == ' ') {
+        i++;
+    }
+    //HTTP/
+    if(i+5 >line_end || !(get_char(msg_http, i) == 'H' && get_char(msg_http, i) == 'T' && get_char(msg_http, i) == 'T' && get_char(msg_http, i) == 'P'
+        && get_char(msg_http, i) == '/')){
+        return HTTP_PARSE_VERSION;
+    }
+    while (i < line_end && (get_char(msg_http, i) >=48 && get_char(msg_http, i) <=57)) {
+        i++;
+    }
+    if(!get_char(msg_http, i)=='.'){
+        return HTTP_PARSE_VERSION;
+    }
+    i++;
+    while (i < line_end && (get_char(msg_http, i) >=48 && get_char(msg_http, i) <=57)) {
+        i++;
+    }
+    return HTTP_PARSE_OK;
 }
-
+int is_connection_close(char *value){
+    return strstr(value,"close") || strstr(value,"CLOSE");
+}
