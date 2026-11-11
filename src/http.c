@@ -314,6 +314,34 @@ int http_parse_next(struct http_msg_ *http_msg_){
     return result;
 }
 
-void main(){
 
+char peticion_ejemplo[]=""
+"GET /index.html HTTP/1.1 \r\n"
+"Host: www.ejemplo.com \r\n"
+"User-Agent: MiClienteHTTP/1.0\r\n"
+"Accept: text/html \r\n"
+"Accept-Encoding: gzip, deflate\r\n"
+"Connection: keep-alive"
+" content-lenght=1000"
+"\r\n\r\n"
+"GET /index.html HTTP/1.1 \r\n"
+"Host: www.ejemplo.com \r\n"
+"User-Agent: MiClienteHTTP/1.0\r\n"
+"Accept: text/html \r\n"
+"Accept-Encoding: gzip, deflate\r\n"
+"Connection: keep-alive"
+"\r\n\r\n"
+"GET /index.html HTTP/1.1 \r\n"
+"Host: www.ejemplo.com \r\n";
+
+void main(){
+    struct http_msg_ http_msg;
+    http_init(&http_msg);
+    http_write(&http_msg,peticion_ejemplo,sizeof(peticion_ejemplo));
+    for(int i=0;i<4;i++){
+        int status =http_parse_next(&http_msg);
+        printf(status);
+        fflush(stdout);
+    }
+    
 }
