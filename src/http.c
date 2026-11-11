@@ -77,7 +77,7 @@ int copy_buffer(char *dst, int size_dst, struct http_msg_ *msg_http, int start, 
 }
 
 int find_request_header_len_(struct http_msg_ *msg_http, size_t *header_len){
-    for (int i = 0; i + 3 < msg_http->len_read; i++) {
+    for (size_t i = 0; i + 3 < msg_http->len_read; i++) {
         if (get_char(msg_http, i) == '\r' && get_char(msg_http, i + 1) == '\n' && get_char(msg_http, i + 2) == '\r' && get_char(msg_http, i + 3) == '\n') {
             *header_len = i + 4;
             return HTTP_PARSE_OK;
@@ -86,8 +86,8 @@ int find_request_header_len_(struct http_msg_ *msg_http, size_t *header_len){
     return HTTP_PARSE_MORE;
 }
 
-int find_fin_header(struct http_msg_ *msg_http, int start, int limit, int *idx_fin_header){
-    for (int i = start; i < limit; i++) {
+int find_fin_header(struct http_msg_ *msg_http, int start, size_t limit, size_t *idx_fin_header){
+    for (size_t i = start; i < limit; i++) {
         char value = get_char(msg_http, i);
         if (value == '\r') {
             if (i + 1 < limit && get_char(msg_http, i + 1) == '\n') {
@@ -169,14 +169,17 @@ int parse_first_line( struct http_msg_ *msg_http, size_t line_end){
         i++;
     }
     //HTTP/
-    if(i+5 >line_end || !(get_char(msg_http, i) == 'H' && get_char(msg_http, i) == 'T' && get_char(msg_http, i) == 'T' && get_char(msg_http, i) == 'P'
-        && get_char(msg_http, i) == '/')){
+    if(i+5 >line_end || !(get_char(msg_http, i) == 'H' && get_char(msg_http, i+1) == 'T' && get_char(msg_http, i+2) == 'T' && get_char(msg_http, i+3) == 'P'
+        && get_char(msg_http, i+4) == '/')){
+        printf("%d , %d",line_end, i);
         return HTTP_PARSE_VERSION;
     }
+    i=i+5;
     while (i < line_end && (get_char(msg_http, i) >=48 && get_char(msg_http, i) <=57)) {
         i++;
     }
-    if(!get_char(msg_http, i)=='.'){
+    if(!(get_char(msg_http, i)=='.')){
+        printf("Falta .");
         return HTTP_PARSE_VERSION;
     }
     i++;
@@ -215,7 +218,7 @@ int parse_headers(struct http_msg_ *http_msg, size_t idx, size_t header_len){
         if (idx_colon == idx || idx_colon == line_end) {
             return HTTP_PARSE_BAD_REQUEST;
         }
-        for (int i = idx; i < idx_colon; i++) {
+        for (size_t i = idx; i < idx_colon; i++) {
             if (!is_char_avaible_header(get_char(http_msg, i))) {
                 return HTTP_PARSE_BAD_REQUEST;
             }
@@ -340,8 +343,9 @@ void main(){
     http_write(&http_msg,peticion_ejemplo,sizeof(peticion_ejemplo));
     for(int i=0;i<4;i++){
         int status =http_parse_next(&http_msg);
-        printf(status);
+        printf("%d \n",status);
         fflush(stdout);
     }
+    return;
     
 }
