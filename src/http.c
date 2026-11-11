@@ -103,7 +103,7 @@ int find_fin_header(struct http_msg_ *msg_http, int start, int limit, int *idx_f
     return HTTP_PARSE_BAD_REQUEST;
 }
 
-void consume_prefix(struct http_msg_ *http_msg, size_t len){
+void skip_http_request(struct http_msg_ *http_msg, size_t len){
     if (len == 0 || len > http_msg->len_read) {
         return;
     }
@@ -291,3 +291,29 @@ int http_write(struct http_msg_ *http_msg, char *data, size_t len_data){
     return HTTP_PARSE_OK;
 }
 
+
+int http_parse_next(struct http_msg_ *http_msg_){
+    size_t header_len = 0;
+    int result = find_request_header_len_(http_msg_,&header_len);
+    if (result != HTTP_PARSE_OK) {
+        http_msg_->idx_end = -1;
+        return HTTP_PARSE_MORE;
+    }
+    memset(&http_msg_->f_line,0,sizeof(http_msg_->f_line));
+    http_msg_->idx_header = 0;
+    http_msg_->close_after_response = 0;
+    size_t first_line_end = 0;
+    result = find_fin_header(http_msg_,0,header_len, &first_line_end);
+    if (result == HTTP_PARSE_OK) {
+        result = parse_first_line(http_msg_,first_line_end);
+    }
+    if (result == HTTP_PARSE_OK) {
+        result = parse_headers(http_msg_,first_line_end + 2,header_len);
+    }
+    skip_http_request(http_msg_, header_len);
+    return result;
+}
+
+void main(){
+
+}
