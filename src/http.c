@@ -188,3 +188,106 @@ int parse_first_line( struct http_msg_ *msg_http, size_t line_end){
 int is_connection_close(char *value){
     return strstr(value,"close") || strstr(value,"CLOSE");
 }
+
+
+int parse_headers(struct http_msg_ *http_msg, size_t idx, size_t header_len){
+    // todo request http necesita el encabezado Host
+    int host_found = 0;
+    while (idx < header_len) {
+        size_t line_end;
+        int error = find_fin_header( http_msg, idx, header_len, &line_end);
+        if (error != HTTP_PARSE_OK) {
+            return error;
+        }
+        if (line_end == idx) {
+            if (host_found) {
+                return HTTP_PARSE_OK;
+            }
+            return HTTP_PARSE_HOST;
+        }
+        if (http_msg->idx_header >= MAX_HEADER) {
+            return HTTP_PARSE_TOO_MANY;
+        }
+        size_t idx_colon = idx;
+        while (idx_colon < line_end && get_char(http_msg, idx_colon) != ':') {
+            idx_colon++;
+        }
+        if (idx_colon == idx || idx_colon == line_end) {
+            return HTTP_PARSE_BAD_REQUEST;
+        }
+        for (int i = idx; i < idx_colon; i++) {
+            if (!is_char_avaible_header(get_char(http_msg, i))) {
+                return HTTP_PARSE_BAD_REQUEST;
+            }
+        }
+        int value_begin = idx_colon + 1;
+        int value_end = line_end;
+        while (value_begin < value_end && (get_char(http_msg, value_begin) == ' ' || get_char(http_msg, value_begin) == '\t')) {
+            value_begin++;
+        }
+        while (value_end > value_begin && (get_char(http_msg, value_end - 1) == ' ' || get_char(http_msg, value_end - 1) == '\t')) {
+            value_end--;
+        }
+        for (int i = value_begin; i < value_end; i++) {
+            char val = get_char(http_msg, i);
+            if (val != '\t' && (val < 32 || val >= 127)) {
+                return HTTP_PARSE_BAD_REQUEST;
+            }
+        }
+        struct http_header_ *temp_header = &http_msg->headers_t[http_msg->idx_header];
+
+        error = copy_buffer(temp_header->header, sizeof(temp_header->header),  http_msg,   idx,  idx_colon  );
+        if (error != HTTP_PARSE_OK) {
+            return error;
+        }
+        error = copy_buffer( temp_header->value,  sizeof(temp_header->value),  http_msg, value_begin, value_end);
+        if (error != HTTP_PARSE_OK) {
+            return error;
+        }
+        temp_header->idx_header = idx_colon - idx;
+        temp_header->idx_value = value_end - value_begin;
+        http_msg->idx_header++;
+        if (strcasecmp(temp_header->header, "Host") == 0) {
+            if (host_found || temp_header->idx_value == 0) {
+                return HTTP_PARSE_HOST;
+            }
+            for (size_t i = 0; i < temp_header->idx_value; i++) {
+                if (temp_header->value[i] == ' ' ||
+                    temp_header->value[i] == '\t') {
+                    return HTTP_PARSE_HOST;
+                }
+            }
+            host_found = 1;
+        }
+        else if (strcasecmp(temp_header->header, "Connection") == 0) {
+
+            if (is_connection_close(temp_header->value)) {
+                http_msg->close_after_response = 1;
+            }
+        }
+        idx = line_end + 2;
+    }
+    return HTTP_PARSE_BAD_REQUEST;
+}
+
+void http_init(struct http_msg_ *http_msg)
+{
+    memset(http_msg, 0, sizeof(*http_msg));
+    http_msg->idx_end = -1;
+}
+
+int http_write(struct http_msg_ *http_msg, char *data, size_t len_data){
+    if (len_data > BUFFER_READ - http_msg->len_read) {
+        return HTTP_PARSE_TOO_LARGE;
+    }
+    if (len_data == 0) {
+        return HTTP_PARSE_OK;
+    }
+    for(size_t i=0;i<len_data;i++){
+        // len_read de la anterior
+        http_msg->buffer_read[(http_msg->idx_begin+i+http_msg->len_read)%BUFFER_READ]= data[i];
+    }
+    http_msg->len_read+=len_data;
+    return HTTP_PARSE_OK;
+}
+
