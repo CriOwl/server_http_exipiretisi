@@ -171,7 +171,6 @@ int parse_first_line( struct http_msg_ *msg_http, size_t line_end){
     //HTTP/
     if(i+5 >line_end || !(get_char(msg_http, i) == 'H' && get_char(msg_http, i+1) == 'T' && get_char(msg_http, i+2) == 'T' && get_char(msg_http, i+3) == 'P'
         && get_char(msg_http, i+4) == '/')){
-        printf("%d , %d",line_end, i);
         return HTTP_PARSE_VERSION;
     }
     i=i+5;
@@ -179,12 +178,22 @@ int parse_first_line( struct http_msg_ *msg_http, size_t line_end){
         i++;
     }
     if(!(get_char(msg_http, i)=='.')){
-        printf("Falta .");
         return HTTP_PARSE_VERSION;
     }
     i++;
-    while (i < line_end && (get_char(msg_http, i) >=48 && get_char(msg_http, i) <=57)) {
-        i++;
+
+    while (i < line_end) {
+        if((get_char(msg_http, i) >=48 && get_char(msg_http, i) <=57)){
+            i++;
+        }else{
+            while (i < line_end && get_char(msg_http, i) == ' ') {
+                i++;
+            }
+            if(get_char(msg_http, i)=='\r'){
+                return HTTP_PARSE_OK;
+            }
+            return HTTP_PARSE_VERSION;
+        }
     }
     return HTTP_PARSE_OK;
 }
@@ -304,7 +313,7 @@ int http_parse_next(struct http_msg_ *http_msg_){
     }
     memset(&http_msg_->f_line,0,sizeof(http_msg_->f_line));
     http_msg_->idx_header = 0;
-    http_msg_->close_after_response = 0;
+    //http_msg_->close_after_response = 0;
     size_t first_line_end = 0;
     result = find_fin_header(http_msg_,0,header_len, &first_line_end);
     if (result == HTTP_PARSE_OK) {
@@ -324,10 +333,10 @@ char peticion_ejemplo[]=""
 "User-Agent: MiClienteHTTP/1.0\r\n"
 "Accept: text/html \r\n"
 "Accept-Encoding: gzip, deflate\r\n"
-"Connection: keep-alive"
+"Connection: close"
 " content-lenght=1000"
 "\r\n\r\n"
-"GET /index.html HTTP/1.1 \r\n"
+"GET /index.html HTTP/1.2 \r\n"
 "Host: www.ejemplo.com \r\n"
 "User-Agent: MiClienteHTTP/1.0\r\n"
 "Accept: text/html \r\n"
@@ -344,8 +353,8 @@ void main(){
     for(int i=0;i<4;i++){
         int status =http_parse_next(&http_msg);
         printf("%d \n",status);
+        printf("%d \n",http_msg.close_after_response);
         fflush(stdout);
     }
     return;
-    
 }
