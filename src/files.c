@@ -2,7 +2,8 @@
 #include <fcntl.h>         
 #include <linux/openat2.h>
 #include <stdio.h>
-#include <sys/syscall.h>    
+#include <sys/syscall.h>  
+#include <sys/sendfile.h>    
 #include <errno.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -14,6 +15,12 @@ char path0[]="/archivo%00.txt";
 char path1[]="/%41%42%43.txt";
 char path2[]="/%2e%2e/secreto.txt";
 char path3[]="/c%1fss/../../secreto.txt";
+
+struct file_metadata{
+    size_t len_file;
+    int fd;
+    long int offset;
+};
 int fd_dir=-1;
 int is_mode_server=0;
 struct open_how rules={0};
@@ -87,5 +94,11 @@ int open_fd(char *path, size_t idx_path){
     }
     return fd;
 }
+
+int send_body_http(int fd_socket, struct file_metadata *fil){
+    sendfile(fd_socket,fil->fd,&fil->offset,4096);
+}   
+
+
 
 
