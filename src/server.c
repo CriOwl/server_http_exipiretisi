@@ -8,6 +8,7 @@ Socket Cliente con keep alive
 
 /* Mejorar la comunicacion de errores */
 #define _POSIX_C_SOURCE 200112L
+#include "include/server.h"
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <arpa/inet.h>

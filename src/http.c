@@ -5,6 +5,8 @@ los encabezados, comandos, y contenido a la vez que verifica la sintaxis http
 y la disponibilidad de recursos para responder con los codigos de respuesta
 correspondiente a la vez que arma los encabezados*/
 #define _POSIX_C_SOURCE 200809L
+#include "include/http.h"
+#include "include/files.h"
 #include <stddef.h>
 #include <string.h>
 #include <strings.h>
@@ -36,9 +38,10 @@ struct first_line {
     size_t idx_method;
     char path[MAX_PATH];
     size_t idx_path;
+    struct file_metadata;
 };
 
-struct http_msg_ {
+struct http_msg_request {
     char buffer_read[BUFFER_READ];
     size_t idx_begin;
     int idx_end;
@@ -49,7 +52,19 @@ struct http_msg_ {
     int close_after_response;
 };
 
-char get_char(struct http_msg_ *msg, size_t offset){
+char get_char(struct http_msg_request *msg, size_t offset);
+int is_char_avaible_header(char value);
+int copy_buffer(char *dst, int size_dst, struct http_msg_request *msg_http, int start, int end);
+int find_request_header_len_(struct http_msg_request *msg_http, size_t *header_len);
+void skip_http_request(struct http_msg_request *http_msg, size_t len);
+int parse_first_line( struct http_msg_request *msg_http, size_t line_end);
+int is_connection_close(char *value);
+int parse_headers(struct http_msg_request *http_msg, size_t idx, size_t header_len);
+void http_init(struct http_msg_request *http_msg);
+int http_write(struct http_msg_request *http_msg, char *data, size_t len_data);
+int http_parse_next(struct http_msg_request *http_msg);
+
+char get_char(struct http_msg_request *msg, size_t offset){
     return msg->buffer_read[(msg->idx_begin + offset) % BUFFER_READ];
 }
 int is_char_avaible_header(char value){
@@ -64,7 +79,7 @@ int is_char_avaible_header(char value){
     return 0;
 }
 
-int copy_buffer(char *dst, int size_dst, struct http_msg_ *msg_http, int start, int end){
+int copy_buffer(char *dst, int size_dst, struct http_msg_request *msg_http, int start, int end){
     if (end < start || end - start >= size_dst) {
         return HTTP_PARSE_TOO_LARGE;
     }
@@ -76,7 +91,7 @@ int copy_buffer(char *dst, int size_dst, struct http_msg_ *msg_http, int start, 
     return HTTP_PARSE_OK;
 }
 
-int find_request_header_len_(struct http_msg_ *msg_http, size_t *header_len){
+int find_request_header_len_(struct http_msg_request *msg_http, size_t *header_len){
     for (size_t i = 0; i + 3 < msg_http->len_read; i++) {
         if (get_char(msg_http, i) == '\r' && get_char(msg_http, i + 1) == '\n' && get_char(msg_http, i + 2) == '\r' && get_char(msg_http, i + 3) == '\n') {
             *header_len = i + 4;
@@ -86,7 +101,7 @@ int find_request_header_len_(struct http_msg_ *msg_http, size_t *header_len){
     return HTTP_PARSE_MORE;
 }
 
-int find_fin_header(struct http_msg_ *msg_http, int start, size_t limit, size_t *idx_fin_header){
+int find_fin_header(struct http_msg_request *msg_http, int start, size_t limit, size_t *idx_fin_header){
     for (size_t i = start; i < limit; i++) {
         char value = get_char(msg_http, i);
         if (value == '\r') {
@@ -103,7 +118,7 @@ int find_fin_header(struct http_msg_ *msg_http, int start, size_t limit, size_t 
     return HTTP_PARSE_BAD_REQUEST;
 }
 
-void skip_http_request(struct http_msg_ *http_msg, size_t len){
+void skip_http_request(struct http_msg_request *http_msg, size_t len){
     if (len == 0 || len > http_msg->len_read) {
         return;
     }
@@ -114,7 +129,7 @@ void skip_http_request(struct http_msg_ *http_msg, size_t len){
 }
 
 
-int parse_first_line( struct http_msg_ *msg_http, size_t line_end){
+int parse_first_line( struct http_msg_request *msg_http, size_t line_end){
     size_t i = 0;
     // Un comando de http al inicio no tiene " " solo al final 
     while (i < line_end && get_char(msg_http, i) != ' ') {
@@ -202,7 +217,7 @@ int is_connection_close(char *value){
 }
 
 
-int parse_headers(struct http_msg_ *http_msg, size_t idx, size_t header_len){
+int parse_headers(struct http_msg_request *http_msg, size_t idx, size_t header_len){
     // todo request http necesita el encabezado Host
     int host_found = 0;
     while (idx < header_len) {
@@ -282,13 +297,12 @@ int parse_headers(struct http_msg_ *http_msg, size_t idx, size_t header_len){
     return HTTP_PARSE_BAD_REQUEST;
 }
 
-void http_init(struct http_msg_ *http_msg)
-{
+void http_init(struct http_msg_request *http_msg){
     memset(http_msg, 0, sizeof(*http_msg));
     http_msg->idx_end = -1;
 }
 
-int http_write(struct http_msg_ *http_msg, char *data, size_t len_data){
+int http_write(struct http_msg_request *http_msg, char *data, size_t len_data){
     if (len_data > BUFFER_READ - http_msg->len_read) {
         return HTTP_PARSE_TOO_LARGE;
     }
@@ -304,25 +318,28 @@ int http_write(struct http_msg_ *http_msg, char *data, size_t len_data){
 }
 
 
-int http_parse_next(struct http_msg_ *http_msg_){
+int http_parse_next(struct http_msg_request *http_msg){
     size_t header_len = 0;
-    int result = find_request_header_len_(http_msg_,&header_len);
+    int result = find_request_header_len_(http_msg,&header_len);
     if (result != HTTP_PARSE_OK) {
-        http_msg_->idx_end = -1;
+        http_msg->idx_end = -1;
         return HTTP_PARSE_MORE;
     }
-    memset(&http_msg_->f_line,0,sizeof(http_msg_->f_line));
-    http_msg_->idx_header = 0;
-    //http_msg_->close_after_response = 0;
+    memset(&http_msg->f_line,0,sizeof(http_msg->f_line));
+    http_msg->idx_header = 0;
+    //http_msg->close_after_response = 0;
     size_t first_line_end = 0;
-    result = find_fin_header(http_msg_,0,header_len, &first_line_end);
+    result = find_fin_header(http_msg,0,header_len, &first_line_end);
     if (result == HTTP_PARSE_OK) {
-        result = parse_first_line(http_msg_,first_line_end);
+        result = parse_first_line(http_msg,first_line_end);
     }
     if (result == HTTP_PARSE_OK) {
-        result = parse_headers(http_msg_,first_line_end + 2,header_len);
+        result = parse_headers(http_msg,first_line_end + 2,header_len);
     }
-    skip_http_request(http_msg_, header_len);
+    skip_http_request(http_msg, header_len);
     return result;
 }
 
+void send_response(){
+    //Crear el encabezado, generar la respuesta y enviar usar files y mime y verificar los codigos de respuesta
+}

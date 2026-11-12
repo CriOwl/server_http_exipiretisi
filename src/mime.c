@@ -5,11 +5,13 @@ los encabezados, comandos, y contenido a la vez que verifica la sintaxis http
 y la disponibilidad de recursos para responder con los codigos de respuesta
 correspondiente a la vez que arma los encabezados*/
 #define _POSIX_C_SOURCE 200809L
+#include "include/mime.h"
 #include <stddef.h>
 #include <string.h>
 #include <strings.h>
 #include <stdio.h>
 
+int get_mime(char *path,size_t len,char *mime);
 
 int get_mime(char *path,size_t len,char *mime){
     size_t idx_inicio = 0;
@@ -22,7 +24,9 @@ int get_mime(char *path,size_t len,char *mime){
         for (i = 0; idx_inicio < len - 1; i++, idx_inicio++) {
             ext[i] = path[idx_inicio];
         }
-    } 
+    }else{
+        return -400;
+    }
     ext[i] = '\0';
     if (strcmp("html", ext) == 0) {
         snprintf(mime_buffer, sizeof(mime_buffer), "%s", "text/html");
@@ -38,4 +42,5 @@ int get_mime(char *path,size_t len,char *mime){
         snprintf(mime_buffer, sizeof(mime_buffer), "%s", "text/plain");
     }
     int n_read = snprintf(mime, 1024, "%s", mime_buffer);
+    return 200;
 }

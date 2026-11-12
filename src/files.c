@@ -1,4 +1,4 @@
-#include <fcntl.h>
+#include "include/files.h"
 #include <fcntl.h>         
 #include <linux/openat2.h>
 #include <stdio.h>
@@ -11,19 +11,20 @@
 #include <stdlib.h>
 #define BAD_PATH   -1
 #define OK_PATH   0
-// Usar la estructura y tomar la cantidad de bytes
-// Mime reconcer la extension y devolver el mime para la creacion del encabezado q se realiza en http
-
-char path0[]="/archivo%00.txt";
-char path1[]="/%41%42%43.txt";
-char path2[]="/%2e%2e/secreto.txt";
-char path3[]="/c%1fss/../../secreto.txt";
 
 struct file_metadata{
     size_t len_file;
     int fd;
     long int offset;
 };
+
+int init_files();
+int is_hex(char value);
+int decode_path(char *path, size_t len_path, char *path_dst);
+int open_fd(char *path, size_t idx_path);
+int send_body_http(int fd_socket, struct file_metadata *fil);
+int get_len_file(struct file_metadata *fil);
+
 int fd_dir=-1;
 int is_mode_server=0;
 struct open_how rules={0};
@@ -99,7 +100,7 @@ int open_fd(char *path, size_t idx_path){
 }
 
 
-
+//--+-+-+-+-+-+-+-+-+-+-+-
 int send_body_http(int fd_socket, struct file_metadata *fil){
     // manejo de errores y consulta del fstast
     sendfile(fd_socket,fil->fd,&fil->offset,4096);
