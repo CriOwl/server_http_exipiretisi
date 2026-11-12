@@ -3,13 +3,16 @@
 #include <linux/openat2.h>
 #include <stdio.h>
 #include <sys/syscall.h>  
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/sendfile.h>    
 #include <errno.h>
 #include <unistd.h>
 #include <stdlib.h>
 #define BAD_PATH   -1
 #define OK_PATH   0
-
+// Usar la estructura y tomar la cantidad de bytes
+// Mime reconcer la extension y devolver el mime para la creacion del encabezado q se realiza en http
 
 char path0[]="/archivo%00.txt";
 char path1[]="/%41%42%43.txt";
@@ -95,9 +98,25 @@ int open_fd(char *path, size_t idx_path){
     return fd;
 }
 
+
+
 int send_body_http(int fd_socket, struct file_metadata *fil){
+    // manejo de errores y consulta del fstast
     sendfile(fd_socket,fil->fd,&fil->offset,4096);
 }   
+
+int get_len_file(struct file_metadata *fil){
+    struct stat metadata={0};
+    int status= fstat(fil->fd,&metadata);
+    if(status<0){
+        perror("No se puede consultar la metadad del archivo");
+    }
+    fil->len_file=metadata.st_size;
+    if(!S_ISREG(metadata.st_mode)){
+        return -404;
+    }
+    return 200;
+}
 
 
 
