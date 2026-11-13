@@ -13,9 +13,10 @@
 #define OK_PATH   0
 
 struct file_metadata{
+    int fd_file;
     size_t len_file;
-    int fd;
     long int offset;
+    int is_file_not_send;
 };
 
 int init_files();
@@ -102,17 +103,27 @@ int open_fd(char *path, size_t idx_path){
 
 //--+-+-+-+-+-+-+-+-+-+-+-
 int send_body_http(int fd_socket, struct file_metadata *fil){
-    // manejo de errores y consulta del fstast
-    sendfile(fd_socket,fil->fd,&fil->offset,4096);
+    while(fil->offset<fil->len_file){
+        long int n=sendfile(fd_socket,fil->fd_file,fil->offset,fil->len_file);
+        if(n>0){
+            fil->offset=fil->offset+n;
+            continue;
+        }else if(n == EAGAIN || n== EWOULDBLOCK){
+            return  1;
+        }else{
+            return -1;
+        }
+    }
 }   
 
 int get_len_file(struct file_metadata *fil){
     struct stat metadata={0};
-    int status= fstat(fil->fd,&metadata);
+    int status= fstat(fil->fd_file,&metadata);
     if(status<0){
-        perror("No se puede consultar la metadad del archivo");
+        perror("No se puede consultar la metadata del archivo");
     }
     fil->len_file=metadata.st_size;
+    fil->is_file_not_send=0;
     if(!S_ISREG(metadata.st_mode)){
         return -404;
     }
