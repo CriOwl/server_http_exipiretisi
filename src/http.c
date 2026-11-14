@@ -7,24 +7,31 @@ correspondiente a la vez que arma los encabezados*/
 #define _POSIX_C_SOURCE 200809L
 #include "include/http.h"
 #include "include/files.h"
+#include "include/server.h"
+#include "include/mime.h"
+#include <errno.h>
+#include <unistd.h>
 #include <stddef.h>
 #include <string.h>
+#include <time.h>
 #include <strings.h>
 #include <stdio.h>
 #define BUFFER_READ         40960
-#define MAX_HEADER             10
+#define MAX_HEADER             30
 #define MAX_BUFFER_HEADER   4096
 #define MAX_BUFFER_VALUE    4096
 #define MAX_METHOD            15
 #define MAX_PATH             120
 #define HTTP_PARSE_OK             1
 #define HTTP_PARSE_MORE           0
-#define HTTP_PARSE_BAD_REQUEST   -1
+#define HTTP_PARSE_BAD_REQUEST   -24
 #define HTTP_PARSE_METHOD       -25
 #define HTTP_PARSE_VERSION      -26
 #define HTTP_PARSE_TOO_LARGE    -27
 #define HTTP_PARSE_TOO_MANY     -28
 #define HTTP_PARSE_HOST         -29
+
+
 
 struct http_header_ {
     char header[MAX_BUFFER_HEADER];
@@ -38,7 +45,6 @@ struct first_line {
     size_t idx_method;
     char path[MAX_PATH];
     size_t idx_path;
-    struct file_metadata;
 };
 
 struct http_msg_ {
@@ -53,6 +59,10 @@ struct http_msg_ {
     struct file_metadata send_file;
 };
 
+struct client{
+    int fd_clt;
+    struct http_msg_ http_msg;
+};
 
 char get_char(struct http_msg_ *msg, size_t offset);
 int is_char_avaible_header(char value);
@@ -65,6 +75,8 @@ int parse_headers(struct http_msg_ *http_msg, size_t idx, size_t header_len);
 void http_init(struct http_msg_ *http_msg);
 int http_write(struct http_msg_ *http_msg, char *data, size_t len_data);
 int http_parse_next(struct http_msg_ *http_msg);
+int read_send_http(struct http_msg_ *http_msg);
+int response(struct client *clt, int fd);
 
 char get_char(struct http_msg_ *msg, size_t offset){
     return msg->buffer_read[(msg->idx_begin + offset) % BUFFER_READ];
@@ -342,6 +354,150 @@ int http_parse_next(struct http_msg_ *http_msg){
     return result;
 }
 
-void send_response(){
-    //Crear el encabezado, generar la respuesta y enviar usar files y mime y verificar los codigos de respuesta
+int get_date_server(char *buffer, int len){
+    time_t date=time(NULL);
+    struct tm date_time={0};
+    if(date==(time_t)-1){
+        return -1;
+        perror("No se puede actualizar correctamente la hora");
+    }
+    if (gmtime_r(&date, &date_time) == NULL)
+        return -1;
+
+    if (strftime(buffer, len, " %a, %d %b %Y %H:%M:%S GMT", &date_time) == 0){
+        return -1;
+    }
+    return 0;    
 }
+
+int response(struct client *clt, int fd){
+    int status=0;
+    int code_http=200;
+    int idx=0;
+    char buffer[1024];
+    if((status=http_parse_next(&clt->http_msg))==0){
+        return 0;
+    }else if(status<0){
+        code_http=400;
+    }else{
+        status=open_fd_get_len(&clt->http_msg.send_file,clt->http_msg.f_line.path,clt->http_msg.f_line.idx_path);
+        if(status<0){
+            code_http=-1*status; 
+        }
+    }
+    int n=0;
+    // codigo http
+    switch(code_http){
+        case 200: //ok
+            n=snprintf(buffer,sizeof(buffer),"HTTP/1.1 200 ok\r\n");
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+            char buffer_mime[64];
+            status=get_mime(clt->http_msg.f_line.path,clt->http_msg.f_line.idx_path+1,buffer_mime,sizeof(buffer_mime));
+            if(status<0){
+                return -2;
+            }
+            n=snprintf(buffer+idx,sizeof(buffer)-idx,"Content-Type: %s\r\n",buffer_mime);
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+            n=snprintf(buffer+idx,sizeof(buffer)-idx,"Content-Length: %ld\r\n",clt->http_msg.send_file.len_file);
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+        break;
+        case 400: // bad request
+            n=snprintf(buffer,sizeof(buffer),"HTTP/1.1 400 Bad Request\r\n");
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+            n=snprintf(buffer+idx,sizeof(buffer)-idx,"Content-Length: %d\r\n",0);
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+        break;
+        case 403: // prohibido
+            n=snprintf(buffer,sizeof(buffer),"HTTP/1.1 403 Forbidden\r\n");
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+            n=snprintf(buffer+idx,sizeof(buffer)-idx,"Content-Length: %d\r\n",0);
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+        break;
+        case 404: // not found
+            n=snprintf(buffer,sizeof(buffer),"HTTP/1.1 404 Not Found\r\n");
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+            n=snprintf(buffer+idx,sizeof(buffer)-idx,"Content-Length: %d\r\n",0);
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+        break;
+        case 405: // metodo no valido
+            n=snprintf(buffer,sizeof(buffer),"HTTP/1.1 405 Method Not Allowed\r\n");
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+            n=snprintf(buffer+idx,sizeof(buffer)-idx,"Content-Length: %d\r\n",0);
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+            n=snprintf(buffer+idx,sizeof(buffer)-idx,"Allow: GET\r\n");
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+        break;
+        default: // 500
+            n=snprintf(buffer,sizeof(buffer),"HTTP/1.1 500 Internal Server Error\r\n");
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+            n=snprintf(buffer+idx,sizeof(buffer)-idx,"Content-Length: %d\r\n",0);
+            if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+                return -1;
+            }
+            idx+=n;
+        break;
+    }
+    char date[64];
+    if((status=get_date_server(date,sizeof(date)))<0){
+        return -1;
+    }
+    n=snprintf(buffer+idx,sizeof(buffer)-idx,"Date: %s\r\n",date);
+    if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+    return -1;
+    }
+    idx+=n;
+    char *state_connection= (clt->http_msg.close_after_response ==0)? "keep-alive":"close";
+    n=snprintf(buffer+idx,sizeof(buffer)-idx,"Connection: %s\r\n\r\n",state_connection);
+    if (n < 0 || (size_t)n >= sizeof(buffer) - idx) {
+    return -1;
+    }
+    idx+=n;
+    n=write(fd,buffer,idx);
+    if(n<0){
+        perror("No se puede enviar el encabezado");
+        return -1;
+    }
+    fprintf(stderr,"[DEBUG] response: encabezados enviados fd=%d bytes=%d codigo=%d:\n%.*s\n",fd,n,code_http,n,buffer);
+    return code_http;
+}
+
+

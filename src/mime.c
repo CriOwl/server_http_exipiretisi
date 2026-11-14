@@ -11,11 +11,13 @@ correspondiente a la vez que arma los encabezados*/
 #include <strings.h>
 #include <stdio.h>
 
-int get_mime(char *path,size_t len,char *mime);
+int get_mime(char *path,size_t len,char *mime_buffer,size_t len_mime_buffer);
 
-int get_mime(char *path,size_t len,char *mime){
+int get_mime(char *path,size_t len,char *mime_buffer,size_t len_mime_buffer){
     size_t idx_inicio = 0;
-    char mime_buffer[64];
+    if(len_mime_buffer<64){
+        return -400;
+    }
     for (idx_inicio = len - 1; idx_inicio > 0 && path[idx_inicio] != '.'; idx_inicio--);
     char ext[len];
     size_t i = 0;
@@ -29,18 +31,17 @@ int get_mime(char *path,size_t len,char *mime){
     }
     ext[i] = '\0';
     if (strcmp("html", ext) == 0) {
-        snprintf(mime_buffer, sizeof(mime_buffer), "%s", "text/html");
+        snprintf(mime_buffer, len_mime_buffer, "%s", "text/html");
     } else if (strcmp("css", ext) == 0) {
-        snprintf(mime_buffer, sizeof(mime_buffer), "%s", "text/css");
+        snprintf(mime_buffer, len_mime_buffer, "%s", "text/css");
     } else if (strcmp("js", ext) == 0) {
-        snprintf(mime_buffer, sizeof(mime_buffer), "%s", "application/javascript");
+        snprintf(mime_buffer, len_mime_buffer, "%s", "application/javascript");
     } else if (strcmp("png", ext) == 0) {
-        snprintf(mime_buffer, sizeof(mime_buffer), "%s", "image/png");
+        snprintf(mime_buffer, len_mime_buffer, "%s", "image/png");
     } else if (strcmp("jpeg", ext) == 0) {
-        snprintf(mime_buffer, sizeof(mime_buffer), "%s", "image/jpeg");
+        snprintf(mime_buffer, len_mime_buffer, "%s", "image/jpeg");
     } else {
-        snprintf(mime_buffer, sizeof(mime_buffer), "%s", "text/plain");
+        snprintf(mime_buffer, len_mime_buffer, "%s", "text/plain");
     }
-    int n_read = snprintf(mime, 1024, "%s", mime_buffer);
     return 200;
 }

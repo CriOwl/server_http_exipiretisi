@@ -1,0 +1,14 @@
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101916; color: #edf5ef; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 48px 24px; }
+main { width: 100%; max-width: 760px; }
+.etiqueta { color: #b9e78d; font-size: 12px; font-weight: 700; letter-spacing: .18em; }
+h1 { max-width: 700px; margin: 28px 0 24px; font-size: clamp(40px, 7vw, 72px); line-height: 1.05; letter-spacing: -.05em; }
+.descripcion { max-width: 540px; color: #b1bfb5; font-size: 18px; line-height: 1.7; }
+section { margin-top: 48px; border-top: 1px solid #344139; }
+h2 { margin: 24px 0; color: #b1bfb5; font-size: 14px; font-weight: 500; }
+a { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 22px 0; border-bottom: 1px solid #344139; color: #edf5ef; text-decoration: none; }
+a:hover { color: #b9e78d; }
+a:focus-visible { outline: 2px solid #b9e78d; outline-offset: 6px; }
+code { color: #b9e78d; font-size: 14px; }
+footer { margin-top: 48px; color: #b1bfb5; font-size: 12px; }
